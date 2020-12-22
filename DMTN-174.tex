@@ -28,7 +28,7 @@ Gabriele Comoretto
 % \setDocCurator{The Curator of this Document}
 
 \setDocAbstract{%
-Preliminary considerations on the implementation of rubin-env environment in lsstsw and newinstall
+Impacts on using the rubin-env environment definition from conda-forge in lsstsw and newinstall.
 }
 
 % Change history defined here.
@@ -47,8 +47,169 @@ Preliminary considerations on the implementation of rubin-env environment in lss
 % Frequently for a technote we do not want a title page  uncomment this to remove the title page and changelog.
 % use \mkshorttitle to remove the extra pages
 
-% ADD CONTENT HERE
-% You can also use the \input command to include several content files.
+
+\section{Introduction} \label{sec:intro}
+
+This technical note has the main scope to document how we are integrating the new introduced 
+\textbf{rubin-env} environment definition from conda-forge in the tooling currently used in DM.
+
+In order to have a clear vision, in this topic, a few historic information are given in section \ref{sec:history},
+Section \ref{sec:feedstock} describes the implementation and management of the rubin-env definition in conda-forge,
+while section \ref{sec:buildtools} describes its integration in the DM build tools. Finally a few words on possible future improvements.
+
+
+\section{Historic Scipipe\_Conda\_Env} \label{sec:history}
+
+The Science Pipelines is requiring a set of libraries to be available in the underlying conda environment.
+The definition of this environment has been handled until now, end 2020, using the github project 
+\href{https://github.com/lsst/scipipe_conda_env}{scipipe\_conda\_env}.
+
+Many of these libraries were managed as Eups packages as part of the Science Pipelines. 
+They have been moved out of the science pipelines, as proposed in \citeds{DMTN-110}.
+This has increased the size of the environment, bringing a few stability and management issues into the loop.
+
+In order to overcome this instabilities, we moved away from a fully semantic versioning approach,
+and defined the environment an exact list of libraries, obtained using:
+
+\begin{verbatim}
+conda list --explicit
+\end{verbatim}
+
+This has the advantage to always relay to a fixed environment but makes it more difficult to extend it,
+by the downstream user of the Science Pipelines.
+Therefore the environment definition has bene implemented in the \textbf{rubin-env} meta-package in conda-forge, 
+as described in section \ref{sec:feedstock}.
+
+
+\subsection{Semantic Versioning} \label{sec:semantic}
+
+Before moving to the description of conda the new rubin-env meta-package, it is important to clarify
+the use of Semantic Versioning in DM.
+
+Due to the collaborative nature of the project, it is very important to be able to add packages to our distributions.
+This implies the need of using semantic versioning to reduce conflicts.
+
+Semantic versioning should guarantee that no breaking changes are introduced when only minor or patch releases are done.
+This permits the environment to include updated fixes on the resolved libraries, without the need to redefine the environment.
+
+
+\section{Rubin-Env Feedstock} \label{sec:feedstock}
+
+Defining the environment required by the Science Pipelines in a  conda-forge meta-package has multiple benefits.
+For example, all changes need to follow the conda-forge workflow and will be tested before making a new version available.
+
+You can refer to the Github repository \href{https://github.com/conda-forge/rubinenv-feedstock}{rubinenv-feedstock} 
+for all information and procedures to follow.
+
+
+\section{DM Build Tools} \label{sec:buildtools}
+
+The tools to be updated in DM in order to switch from scipipe\_conda\_env to rubin-env are:
+
+\begin{itemize}
+\item lsstsw
+\item newinstall
+\item jenkins-dm-jobs
+\item ci-scripts
+\end{itemize}
+
+The tool most impacted is lsstsw.
+
+
+\subsection{Semantic Versioning Limitation} \label{sec:limitations}
+
+In some cases, a minor change in a library resolved by rubin-env, is breaking the usability
+of the Science Pipelines code.
+This implies that given a fixed reference or tag of the Science Pipelines, build is giving a error and 
+it is not possible to deploy a specific distribution from source anymore.
+
+The main reason that this may happen is that in some libraries resolved by rubin-env,
+the semantic versioning is not followed as it should be. 
+In this case, in order to be able to deploy from source a specific version version of the Science Pipelines,
+we need to fix a dependency in rubin-env, avoiding to semantic versioning for one or more provided libraries.
+
+In other cases, the problem can be in the Science Pipelines code itself.
+In tis case, it is required to patch the Science Pipelines
+
+
+\subsection{Ensuring Reproducibility} \label{sec:reproducibility}
+
+In order to be able to debut the cases described in the previous section \ref{sec:limitations},
+it is important to have available the exact pinned version of the environment used for a specific build.
+
+Also, from an operational point of view, we don't need the flexibility provided by the semantic versioning,
+but it is preferable to stick to the same configuration that has been used for development and validation.
+
+Therefore we need to store the pinned version of the environment used in each build that we persist.
+
+
+\subsection{Implementation} \label{sec:implementation}
+
+The adoption of the rubin-env meta-package is implemented in the DM-27005 ticket branches,
+in all four DM build tools. 
+
+In the general case, it is sufficient to switch the creation of the environment from scipipe\_conda\_env
+to the rubin-env definition, and update the reference, that will become the rubin-env version.
+
+However, in order to be able to persist the exact pinned version used for each build, some additional changes have to be added.
+
+
+\subsubsection{Lsstsw} \label{sec:lsstsw}
+
+Lsstsw provide a few scripts to perform the deployment, setup and build of the Science Pipelines.
+In addition there is a script that push to the EUPS\_PKGROOT the source Eups packages, for a specific build.
+
+In order to store and persist also the pinned version of the used environment, a specific env file is added to the distribution, 
+and pushed together with the source packages.
+
+Source packages are stored in the Eups packages repository in an unstructured way, in the folder:
+
+\begin{verbatim}
+\$EUPS\_PKGROOT/stack/src
+\end{verbatim}
+
+Under the $src$ folder there are a few subfolders, for example to provide the Eups tags information.
+A new folder \textbf{env} is added under $src$, where the pinned environment for each build is stores.
+
+Since the environment may change with the architecture where the build is performed, we need also to make it persistent for each
+binary distribution that we persist. See following subsection \ref{sec:jenkins-dm-jobs}.
+
+
+\subsubsection{Jenkins-Dm-Jobs} \label{sec:jenkins-dm-jobs}
+
+The tooling used to run continuous integration jobs in principle could be affected just in a very marginal way
+by the introduction of the rubin-env meta-package.
+
+However, this set of tooling, includes a large amount of logic that do no belong strictly to CI.
+This is the case of the generation and storage of the Eups binaries distributions in the EUPS\_PKGROOT pakages repository.
+
+Eups binary packages are stored in the EUPS\_PKGROOT following a folder structure that dendes on a few factors,
+like for example, platform, compiler, or environment reference. For example:
+
+\begin{verbatim}
+\$EUPS\_PKGROOT/stack/redhat/el8/conda-system/miniconda-py37_4.8.2-cb4e2dc/
+\end{verbatim}
+
+All packages produced with the same setup, will be stored in an unstructured way in a EUPS\_PKGROOT as described above.
+Under this root folder, there are a few subfolder, for example, for the manifests obtained in a build.
+
+In the same way, as previously described for the source packages in the previous subsection \ref{sec:lsstsw},
+the pinned version of the environment is saved in a specific \textbf{env} subfolder and pushed to the package repository 
+together with the binary distribution.
+
+
+
+\section{Future Work} \label{sec:future}
+
+As described in this technical note, the tools have been updated in order to be able to store the information.
+However no use of it is done at the moment in a programmatic way.
+
+We should update the deployment tools to be able to resolve a specific environment, when requested, 
+as an alternative to the default environment.
+
+Also, it should be possible to analyze the environment changes. Making this visible may help anticipating problems.
+
+
 
 \appendix
 % Include all the relevant bib files.
